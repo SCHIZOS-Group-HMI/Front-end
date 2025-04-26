@@ -1,4 +1,4 @@
-package com.example.hmi.viewmodel
+package com.example.hmi.ui.viewmodel
 
 import android.util.Log
 import androidx.lifecycle.ViewModel

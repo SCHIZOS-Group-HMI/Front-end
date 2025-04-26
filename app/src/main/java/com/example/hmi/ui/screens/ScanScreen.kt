@@ -26,7 +26,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.hmi.ui.theme.HMITheme
-import com.example.hmi.viewmodel.ScanViewModel
+import com.example.hmi.ui.viewmodel.ScanViewModel
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
