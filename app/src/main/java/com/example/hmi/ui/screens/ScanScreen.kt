@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -39,10 +41,7 @@ fun ScanScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Camera executor
     val cameraExecutor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
-
-    // Microphone permission
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -60,6 +59,14 @@ fun ScanScreen(
         }
     }
 
+    // Thêm ImageAnalysis để lấy imageProxy
+    val imageAnalyzer = remember {
+        ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+    }
+    var latestImageProxy by remember { mutableStateOf<ImageProxy?>(null) }
+
     HMITheme {
         Column(
             modifier = Modifier
@@ -69,10 +76,14 @@ fun ScanScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Spacer to replace scan result text
-            Spacer(modifier = Modifier.height(48.dp))
+            // Hiển thị kết quả quét (nếu có)
+            Text(
+                text = uiState.scanResult.ifEmpty { "No results yet" },
+                fontSize = 16.sp,
+                color = Color.Black,
+                modifier = Modifier.padding(16.dp)
+            )
 
-            // Camera Preview
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -91,14 +102,20 @@ fun ScanScreen(
                             val preview = Preview.Builder().build().also {
                                 it.setSurfaceProvider(previewView.surfaceProvider)
                             }
-
                             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                            // Thiết lập ImageAnalysis để lấy imageProxy
+                            imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
+                                latestImageProxy = imageProxy
+                                // Không đóng imageProxy ở đây, để sử dụng sau
+                            }
 
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
                                 cameraSelector,
-                                preview
+                                preview,
+                                imageAnalyzer
                             )
                             Log.d("ScanScreen", "Camera preview bound successfully")
                         } catch (exc: Exception) {
@@ -108,13 +125,14 @@ fun ScanScreen(
                 }
             )
 
-            // Scan button (toggles scanning state)
             Button(
                 onClick = {
                     if (!hasMicPermission) {
                         micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     } else {
-                        viewModel.onScanClicked()
+                        latestImageProxy?.let { imageProxy ->
+                            viewModel.onScanClicked(imageProxy)
+                        } ?: Log.e("ScanScreen", "No image proxy available")
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
@@ -129,7 +147,6 @@ fun ScanScreen(
                 )
             }
 
-            // Bottom row with QUIT button and icons
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -153,7 +170,6 @@ fun ScanScreen(
                 }
 
                 Row {
-                    // Microphone Icon (controls real-time audio input)
                     IconButton(
                         onClick = {
                             if (!hasMicPermission) {
@@ -177,7 +193,6 @@ fun ScanScreen(
                         )
                     }
 
-                    // Speaker Icon
                     IconButton(
                         onClick = { viewModel.onSpeakerClicked() },
                         modifier = Modifier
@@ -199,10 +214,11 @@ fun ScanScreen(
         }
     }
 
-    // Cleanup executor on dispose
     DisposableEffect(cameraExecutor) {
         onDispose {
             cameraExecutor.shutdown()
+            imageAnalyzer.clearAnalyzer()
+            latestImageProxy?.close()
             Log.d("ScanScreen", "Camera executor shut down")
         }
     }

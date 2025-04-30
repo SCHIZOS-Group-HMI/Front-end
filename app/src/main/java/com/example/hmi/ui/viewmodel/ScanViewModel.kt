@@ -58,11 +58,8 @@ class ScanViewModel : ViewModel() {
     private fun sendScanRequest(imageProxy: ImageProxy) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-// Capture audio and image
                 val (audioBase64, amplitude) = audioData?.captureAudio() ?: Pair("", 0.0)
                 val imageBase64 = imageData?.captureImage(imageProxy) ?: ""
-
-// Prepare request data
                 val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date())
                 val metadata = Metadata()
                 val request = ScanRequest(
@@ -72,18 +69,18 @@ class ScanViewModel : ViewModel() {
                     audioAmplitude = amplitude,
                     metadata = metadata
                 )
-
-// Send request to API
+                Log.d("ScanViewModel", "Sending request: $request")
                 val response = ApiClient.apiService.sendScanData(request)
                 if (response.isSuccessful) {
-                    Log.d("ScanViewModel", "Request sent successfully")
+                    val scanResponse = response.body()
+                    Log.d("ScanViewModel", "Request sent successfully: $scanResponse")
                     _uiState.value = _uiState.value.copy(
-                        scanResult = "Data sent successfully"
+                        scanResult = "Detected objects: ${scanResponse?.objectDetection?.joinToString { it.className }} | Audio: ${scanResponse?.audioDetection}"
                     )
                 } else {
                     Log.e("ScanViewModel", "Request failed: ${response.code()}")
                     _uiState.value = _uiState.value.copy(
-                        scanResult = "Failed to send data"
+                        scanResult = "Failed to send data: ${response.code()}"
                     )
                 }
             } catch (e: Exception) {
@@ -91,6 +88,9 @@ class ScanViewModel : ViewModel() {
                 _uiState.value = _uiState.value.copy(
                     scanResult = "Error: ${e.message}"
                 )
+            }
+            finally {
+                imageProxy.close()
             }
         }
     }

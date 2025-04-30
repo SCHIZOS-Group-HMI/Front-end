@@ -6,7 +6,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object ApiClient {
-    private const val BASE_URL = "http://your-api-url.com/" // Thay bằng URL API của bạn
+    private const val BASE_URL = "http://10.0.2.2:8000/" // Thay bằng URL API của bạn
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
