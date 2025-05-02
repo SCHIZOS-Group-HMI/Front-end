@@ -1,18 +1,20 @@
+// ScanViewModel.kt
 package com.example.hmi.ui.viewmodel
 
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
-import androidx.camera.core.ImageProxy
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hmi.data.AudioData
-import com.example.hmi.data.ImageData
 import com.example.hmi.data.Metadata
 import com.example.hmi.network.ApiClient
 import com.example.hmi.network.ScanRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val SCAN_INTERVAL_MS = 7000L
+
 data class ScanUiState(
     val isScanning: Boolean = false,
     val isMicOn: Boolean = false,
@@ -28,118 +32,109 @@ data class ScanUiState(
     val scanResult: String = ""
 )
 
-class ScanViewModel : ViewModel() {
+class ScanViewModel(
+    private val context: Context
+) : ViewModel() {
+
     private val _uiState = MutableStateFlow(ScanUiState())
     val uiState: StateFlow<ScanUiState> = _uiState.asStateFlow()
+
     private var audioData: AudioData? = null
-    private var imageData: ImageData? = null
-    private var isReadingAudio = false
+
+    // Holds the latest Base64 image string
+    var latestImageBase64: String? = null
+
+    private var scanJob: Job? = null
 
     init {
         audioData = AudioData()
-        imageData = ImageData()
     }
 
-    fun onScanClicked(imageProxy: ImageProxy? = null) {
-        Log.d("ScanViewModel", "Scan clicked")
-        _uiState.value = _uiState.value.copy(
-            isScanning = !_uiState.value.isScanning
-        )
-        if (_uiState.value.isScanning && imageProxy != null) {
-            sendScanRequest(imageProxy)
-        }
-        if (!_uiState.value.isScanning) {
-            _uiState.value = _uiState.value.copy(
-                scanResult = ""
-            )
+    /** Start/stop continuous scanning */
+    fun onScanClicked() {
+        if (scanJob == null) {
+            _uiState.value = _uiState.value.copy(isScanning = true)
+            scanJob = viewModelScope.launch(Dispatchers.IO) {
+                while (isActive) {
+                    latestImageBase64?.let { imgB64 ->
+                        latestImageBase64 = null
+                        sendScanRequest(imgB64)
+                    }
+                    delay(SCAN_INTERVAL_MS)
+                }
+            }
+        } else {
+            scanJob?.cancel()
+            scanJob = null
+            _uiState.value = ScanUiState() // reset
         }
     }
 
-    private fun sendScanRequest(imageProxy: ImageProxy) {
+    private fun sendScanRequest(imageB64: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val (audioBase64, amplitude) = audioData?.captureAudio() ?: Pair("", 0.0)
-                val imageBase64 = imageData?.captureImage(imageProxy) ?: ""
-                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date())
-                val metadata = Metadata()
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.RECORD_AUDIO
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    _uiState.value = _uiState.value.copy(
+                        scanResult = "Error: RECORD_AUDIO permission required"
+                    )
+                    return@launch
+                }
+
+                // capture audio
+                val (audioB64, amplitude) = audioData?.captureAudio() ?: Pair("", 0.0)
+
+                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+                    .format(Date())
                 val request = ScanRequest(
-                    timestamp = timestamp,
-                    image = imageBase64,
-                    audio = audioBase64,
-                    audioAmplitude = amplitude,
-                    metadata = metadata
+                    timestamp     = timestamp,
+                    image         = imageB64,
+                    audio         = audioB64,
+                    audioAmplitude= amplitude,
+                    metadata      = Metadata()
                 )
-                Log.d("ScanViewModel", "Sending request: $request")
+
                 val response = ApiClient.apiService.sendScanData(request)
                 if (response.isSuccessful) {
-                    val scanResponse = response.body()
-                    Log.d("ScanViewModel", "Request sent successfully: $scanResponse")
+                    val body = response.body()
                     _uiState.value = _uiState.value.copy(
-                        scanResult = "Detected objects: ${scanResponse?.objectDetection?.joinToString { it.className }} | Audio: ${scanResponse?.audioDetection}"
+                        scanResult = "Objects: ${body?.objectDetection?.joinToString { it.className }} | " +
+                                "Audio: ${body?.audioDetection}"
                     )
                 } else {
-                    Log.e("ScanViewModel", "Request failed: ${response.code()}")
                     _uiState.value = _uiState.value.copy(
-                        scanResult = "Failed to send data: ${response.code()}"
+                        scanResult = "Failed: ${response.code()}"
                     )
                 }
             } catch (e: Exception) {
-                Log.e("ScanViewModel", "Error sending request", e)
+                Log.e("ScanViewModel", "Error", e)
                 _uiState.value = _uiState.value.copy(
                     scanResult = "Error: ${e.message}"
                 )
-            }
-            finally {
-                imageProxy.close()
             }
         }
     }
 
     fun onQuitClicked() {
-        Log.d("ScanViewModel", "Quit clicked")
-        stopAudioCapture()
-        _uiState.value = _uiState.value.copy(
-            isScanning = false,
-            isMicOn = false,
-            isSpeakerOn = false,
-            scanResult = ""
-        )
+        scanJob?.cancel()
+        scanJob = null
+        _uiState.value = ScanUiState()
     }
 
     fun onMicClicked() {
-        Log.d("ScanViewModel", "Microphone clicked")
-        if (!_uiState.value.isMicOn) {
-            startAudioCapture()
-        } else {
-            stopAudioCapture()
-        }
-        _uiState.value = _uiState.value.copy(
-            isMicOn = !_uiState.value.isMicOn
-        )
-        Log.d("ScanViewModel", "Mic is ${if (_uiState.value.isMicOn) "ON" else "OFF"}")
+        // toggle mic logic...
+        _uiState.value = _uiState.value.copy(isMicOn = !_uiState.value.isMicOn)
     }
 
     fun onSpeakerClicked() {
-        Log.d("ScanViewModel", "Speaker clicked")
-        _uiState.value = _uiState.value.copy(
-            isSpeakerOn = !_uiState.value.isSpeakerOn
-        )
-        Log.d("ScanViewModel", "Speaker is ${if (_uiState.value.isSpeakerOn) "ON" else "OFF"}")
-    }
-
-    private fun startAudioCapture() {
-        isReadingAudio = true
-        Log.d("ScanViewModel", "Audio capture started")
-    }
-
-    private fun stopAudioCapture() {
-        isReadingAudio = false
-        audioData?.release()
-        Log.d("ScanViewModel", "Audio capture stopped")
+        _uiState.value = _uiState.value.copy(isSpeakerOn = !_uiState.value.isSpeakerOn)
     }
 
     override fun onCleared() {
         super.onCleared()
-        stopAudioCapture()
+        scanJob?.cancel()
     }
 }

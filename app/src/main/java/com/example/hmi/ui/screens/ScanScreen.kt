@@ -1,8 +1,13 @@
+// ScanScreen.kt
 package com.example.hmi.ui.screens
 
+import ScanViewModelFactory
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.util.Base64
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -29,19 +34,23 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.hmi.ui.theme.HMITheme
 import com.example.hmi.ui.viewmodel.ScanViewModel
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 @Composable
 fun ScanScreen(
-    viewModel: ScanViewModel = viewModel(),
-    onQuitClicked: () -> Unit
+    onQuitClicked: () -> Unit,
+    viewModel: ScanViewModel = viewModel(
+        factory = ScanViewModelFactory(LocalContext.current)
+    )
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val cameraExecutor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
+
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -54,18 +63,15 @@ fun ScanScreen(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasMicPermission = isGranted
-        if (isGranted) {
-            viewModel.onMicClicked()
-        }
+        if (isGranted) viewModel.onMicClicked()
     }
 
-    // Thêm ImageAnalysis để lấy imageProxy
     val imageAnalyzer = remember {
         ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
     }
-    var latestImageProxy by remember { mutableStateOf<ImageProxy?>(null) }
+    var useFrontCamera by remember { mutableStateOf(false) }
 
     HMITheme {
         Column(
@@ -76,7 +82,6 @@ fun ScanScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Hiển thị kết quả quét (nếu có)
             Text(
                 text = uiState.scanResult.ifEmpty { "No results yet" },
                 fontSize = 16.sp,
@@ -94,47 +99,44 @@ fun ScanScreen(
                     }
                 },
                 update = { previewView ->
-                    Log.d("ScanScreen", "Setting up camera preview")
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                     cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                        val cameraProvider = cameraProviderFuture.get()
+                        val cameraSelector = if (useFrontCamera)
+                            CameraSelector.DEFAULT_FRONT_CAMERA
+                        else
+                            CameraSelector.DEFAULT_BACK_CAMERA
 
-                            // Thiết lập ImageAnalysis để lấy imageProxy
-                            imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
-                                latestImageProxy = imageProxy
-                                // Không đóng imageProxy ở đây, để sử dụng sau
-                            }
-
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                cameraSelector,
-                                preview,
-                                imageAnalyzer
-                            )
-                            Log.d("ScanScreen", "Camera preview bound successfully")
-                        } catch (exc: Exception) {
-                            Log.e("ScanScreen", "Failed to bind camera preview", exc)
+                        val preview = Preview.Builder().build().also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
                         }
+
+                        imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
+                            // 1) Convert ImageProxy → JPEG bytes → Base64
+                            val bmp = imageProxy.toBitmap()
+                            val baos = ByteArrayOutputStream().apply {
+                                bmp.compress(Bitmap.CompressFormat.JPEG, 50, this)
+                            }
+                            val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                            // 2) Close proxy immediately
+                            imageProxy.close()
+                            // 3) Pass to ViewModel
+                            viewModel.latestImageBase64 = imageBase64
+                        }
+
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            cameraSelector,
+                            preview,
+                            imageAnalyzer
+                        )
                     }, ContextCompat.getMainExecutor(context))
                 }
             )
 
             Button(
-                onClick = {
-                    if (!hasMicPermission) {
-                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    } else {
-                        latestImageProxy?.let { imageProxy ->
-                            viewModel.onScanClicked(imageProxy)
-                        } ?: Log.e("ScanScreen", "No image proxy available")
-                    }
-                },
+                onClick = { viewModel.onScanClicked() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -148,42 +150,39 @@ fun ScanScreen(
             }
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Button(
+                    onClick = { useFrontCamera = !useFrontCamera },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+                ) {
+                    Text(
+                        text = if (useFrontCamera) "Camera Sau" else "Camera Trước",
+                        color = Color.White
+                    )
+                }
                 Button(
                     onClick = {
                         viewModel.onQuitClicked()
                         onQuitClicked()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                    shape = MaterialTheme.shapes.small
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                 ) {
-                    Text(
-                        text = "QUIT",
-                        fontSize = 16.sp,
-                        color = Color.White
-                    )
+                    Text("QUIT", color = Color.White)
                 }
-
                 Row {
                     IconButton(
                         onClick = {
-                            if (!hasMicPermission) {
-                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            } else {
-                                viewModel.onMicClicked()
-                            }
+                            if (!hasMicPermission) micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            else viewModel.onMicClicked()
                         },
                         modifier = Modifier
                             .size(48.dp)
                             .border(
                                 width = if (uiState.isMicOn) 2.dp else 0.dp,
-                                color = if (uiState.isMicOn) Color.Green else Color.Transparent,
-                                shape = MaterialTheme.shapes.small
+                                color = if (uiState.isMicOn) Color.Green else Color.Transparent
                             )
                     ) {
                         Icon(
@@ -192,15 +191,13 @@ fun ScanScreen(
                             tint = if (uiState.isMicOn) Color.Green else Color.Black
                         )
                     }
-
                     IconButton(
                         onClick = { viewModel.onSpeakerClicked() },
                         modifier = Modifier
                             .size(48.dp)
                             .border(
                                 width = if (uiState.isSpeakerOn) 2.dp else 0.dp,
-                                color = if (uiState.isSpeakerOn) Color.Green else Color.Transparent,
-                                shape = MaterialTheme.shapes.small
+                                color = if (uiState.isSpeakerOn) Color.Green else Color.Transparent
                             )
                     ) {
                         Icon(
@@ -218,7 +215,6 @@ fun ScanScreen(
         onDispose {
             cameraExecutor.shutdown()
             imageAnalyzer.clearAnalyzer()
-            latestImageProxy?.close()
             Log.d("ScanScreen", "Camera executor shut down")
         }
     }
