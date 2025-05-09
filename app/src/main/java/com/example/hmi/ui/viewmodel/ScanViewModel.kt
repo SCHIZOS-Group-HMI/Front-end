@@ -1,6 +1,7 @@
 // ScanViewModel.kt
 package com.example.hmi.ui.viewmodel
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
@@ -9,8 +10,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hmi.data.AudioData
 import com.example.hmi.data.Metadata
-import com.example.hmi.network.ApiClient
 import com.example.hmi.network.ScanRequest
+import com.example.hmi.network.ObjectDetectionResult
+import com.example.hmi.network.BoundingBox
+import com.example.hmi.network.ApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -18,18 +21,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
-private const val SCAN_INTERVAL_MS = 7000L
+private const val SCAN_INTERVAL_MS = 2000L
 
 data class ScanUiState(
     val isScanning: Boolean = false,
     val isMicOn: Boolean = false,
     val isSpeakerOn: Boolean = false,
-    val scanResult: String = ""
+    val scanResult: String = "",
+    val boxes: List<BoundingBox> = emptyList()
 )
 
 class ScanViewModel(
@@ -41,7 +45,7 @@ class ScanViewModel(
 
     private var audioData: AudioData? = null
 
-    // Holds the latest Base64 image string
+    /** Giữ Base64 của ảnh mới nhất từ UI */
     var latestImageBase64: String? = null
 
     private var scanJob: Job? = null
@@ -50,14 +54,15 @@ class ScanViewModel(
         audioData = AudioData()
     }
 
-    /** Start/stop continuous scanning */
+    /** Bật/tắt chế độ scan liên tục */
     fun onScanClicked() {
         if (scanJob == null) {
-            _uiState.value = _uiState.value.copy(isScanning = true)
+            _uiState.update { it.copy(isScanning = true) }
             scanJob = viewModelScope.launch(Dispatchers.IO) {
                 while (isActive) {
-                    latestImageBase64?.let { imgB64 ->
-                        latestImageBase64 = null
+                    val imgB64 = latestImageBase64
+                    latestImageBase64 = null
+                    if (imgB64 != null) {
                         sendScanRequest(imgB64)
                     }
                     delay(SCAN_INTERVAL_MS)
@@ -66,55 +71,51 @@ class ScanViewModel(
         } else {
             scanJob?.cancel()
             scanJob = null
-            _uiState.value = ScanUiState() // reset
+            _uiState.value = ScanUiState()
         }
     }
 
-    private fun sendScanRequest(imageB64: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                if (ContextCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.RECORD_AUDIO
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    _uiState.value = _uiState.value.copy(
-                        scanResult = "Error: RECORD_AUDIO permission required"
-                    )
-                    return@launch
-                }
+    private suspend fun sendScanRequest(imageB64: String) {
+        // Kiểm tra quyền RECORD_AUDIO
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            _uiState.update { it.copy(scanResult = "Error: RECORD_AUDIO permission required") }
+            return
+        }
 
-                // capture audio
-                val (audioB64, amplitude) = audioData?.captureAudio() ?: Pair("", 0.0)
+        // Capture audio
+        val (audioB64, amplitude) = audioData?.captureAudio() ?: ("" to 0.0)
 
-                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-                    .format(Date())
-                val request = ScanRequest(
-                    timestamp     = timestamp,
-                    image         = imageB64,
-                    audio         = audioB64,
-                    audioAmplitude= amplitude,
-                    metadata      = Metadata()
-                )
+        // Tạo request
+        val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+            .format(Date())
+        val request = ScanRequest(
+            timestamp = timestamp,
+            image = imageB64,
+            audio = audioB64,
+            audioAmplitude = amplitude,
+            metadata = Metadata()
+        )
 
-                val response = ApiClient.apiService.sendScanData(request)
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    _uiState.value = _uiState.value.copy(
-                        scanResult = "Objects: ${body?.objectDetection?.joinToString { it.className }} | " +
-                                "Audio: ${body?.audioDetection}"
-                    )
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        scanResult = "Failed: ${response.code()}"
-                    )
-                }
-            } catch (e: Exception) {
-                Log.e("ScanViewModel", "Error", e)
-                _uiState.value = _uiState.value.copy(
-                    scanResult = "Error: ${e.message}"
-                )
+        try {
+            val resp = ApiClient.apiService.sendScanData(request)
+            if (resp.isSuccessful) {
+                val body = resp.body()
+                // Extract boxes
+                val dets: List<ObjectDetectionResult> = body?.objectDetection ?: emptyList()
+                val bboxes: List<BoundingBox> = dets.map { it.bbox }
+                // Update UI state
+                val txt = "Objects: ${dets.joinToString { it.className }} | Audio: ${body?.audioDetection}"
+                _uiState.update { it.copy(scanResult = txt, boxes = bboxes) }
+            } else {
+                _uiState.update { it.copy(scanResult = "Failed: ${resp.code()}") }
             }
+        } catch (e: Exception) {
+            Log.e("ScanViewModel", "Error sending request", e)
+            _uiState.update { it.copy(scanResult = "Error: ${e.message}") }
         }
     }
 
@@ -125,12 +126,11 @@ class ScanViewModel(
     }
 
     fun onMicClicked() {
-        // toggle mic logic...
-        _uiState.value = _uiState.value.copy(isMicOn = !_uiState.value.isMicOn)
+        _uiState.update { it.copy(isMicOn = !it.isMicOn) }
     }
 
     fun onSpeakerClicked() {
-        _uiState.value = _uiState.value.copy(isSpeakerOn = !_uiState.value.isSpeakerOn)
+        _uiState.update { it.copy(isSpeakerOn = !it.isSpeakerOn) }
     }
 
     override fun onCleared() {

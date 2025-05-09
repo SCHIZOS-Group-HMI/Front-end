@@ -7,15 +7,12 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -24,6 +21,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -34,8 +34,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.hmi.ui.theme.HMITheme
 import com.example.hmi.ui.viewmodel.ScanViewModel
+import com.example.hmi.utils.SpeechToTextHelper
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 @Composable
@@ -48,8 +48,15 @@ fun ScanScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
-    val cameraExecutor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    // thêm vào bên trên, cùng chỗ khai báo cameraExecutor…
+    var speechText by remember { mutableStateOf("") }
+    var sttActive by remember { mutableStateOf(false) }
+    val sttHelper = remember {
+        SpeechToTextHelper(context) { text ->
+            speechText = text
+        }
+    }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -59,23 +66,21 @@ fun ScanScreen(
             ) == PackageManager.PERMISSION_GRANTED
         )
     }
-    val micPermissionLauncher = rememberLauncherForActivityResult(
+    val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasMicPermission = isGranted
-        if (isGranted) viewModel.onMicClicked()
+    ) { granted ->
+        hasMicPermission = granted
+        if (granted) viewModel.onMicClicked()
     }
 
-    val imageAnalyzer = remember {
-        ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-    }
-    var useFrontCamera by remember { mutableStateOf(false) }
+    var useFront by remember { mutableStateOf(false) }
+    val imageAnalyzer = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .build()
 
     HMITheme {
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
                 .background(Color.White)
                 .padding(16.dp),
@@ -83,58 +88,86 @@ fun ScanScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = uiState.scanResult.ifEmpty { "No results yet" },
-                fontSize = 16.sp,
-                color = Color.Black,
-                modifier = Modifier.padding(16.dp)
+                uiState.scanResult.ifEmpty { "No results yet" },
+                fontSize = 16.sp, color = Color.Black, modifier = Modifier.padding(16.dp)
+            )
+            Text(
+                text = speechText,
+                fontSize = 14.sp,
+                color = Color.Blue,
+                modifier = Modifier.padding(8.dp)
             )
 
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp),
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                },
-                update = { previewView ->
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val cameraSelector = if (useFrontCamera)
-                            CameraSelector.DEFAULT_FRONT_CAMERA
-                        else
-                            CameraSelector.DEFAULT_BACK_CAMERA
-
-                        val preview = Preview.Builder().build().also {
-                            it.setSurfaceProvider(previewView.surfaceProvider)
+            Box(modifier = Modifier
+                .fillMaxWidth()
+                .height(400.dp)) {
+                // 1. Camera Preview
+                AndroidView(
+                    modifier = Modifier.matchParentSize(),
+                    factory = { ctx ->
+                        PreviewView(ctx).apply {
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                         }
+                    },
+                    update = { previewView ->
+                        val providerFut = ProcessCameraProvider.getInstance(context)
+                        providerFut.addListener({
+                            val camProvider = providerFut.get()
+                            val selector = if (useFront)
+                                CameraSelector.DEFAULT_FRONT_CAMERA
+                            else
+                                CameraSelector.DEFAULT_BACK_CAMERA
 
-                        imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
-                            // 1) Convert ImageProxy → JPEG bytes → Base64
-                            val bmp = imageProxy.toBitmap()
-                            val baos = ByteArrayOutputStream().apply {
-                                bmp.compress(Bitmap.CompressFormat.JPEG, 50, this)
+                            val preview = Preview.Builder().build().also {
+                                it.setSurfaceProvider(previewView.surfaceProvider)
                             }
-                            val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-                            // 2) Close proxy immediately
-                            imageProxy.close()
-                            // 3) Pass to ViewModel
-                            viewModel.latestImageBase64 = imageBase64
+
+                            imageAnalyzer.setAnalyzer(cameraExecutor) { proxy ->
+                                // Convert → Base64
+                                val bmp = proxy.toBitmap()
+                                val baos = ByteArrayOutputStream().apply {
+                                    bmp.compress(Bitmap.CompressFormat.JPEG, 50, this)
+                                }
+                                viewModel.latestImageBase64 =
+                                    Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                                proxy.close()
+                            }
+
+                            camProvider.unbindAll()
+                            camProvider.bindToLifecycle(
+                                lifecycleOwner, selector, preview, imageAnalyzer
+                            )
+                        }, ContextCompat.getMainExecutor(context))
+                    }
+                )
+
+                // 2. Overlay boxes
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    val previewW = size.width
+                    val previewH = size.height
+
+                    uiState.boxes.forEach { box ->
+                        // Tính toạ độ tuyệt đối
+                        val left = (box.x * previewW).coerceIn(0f, previewW)
+                        val top = (box.y * previewH).coerceIn(0f, previewH)
+                        val right = ((box.x + box.w) * previewW).coerceIn(0f, previewW)
+                        val bottom = ((box.y + box.h) * previewH).coerceIn(0f, previewH)
+
+                        // Nếu box còn có kích thước hợp lệ thì vẽ
+                        if (right > left && bottom > top) {
+                            drawRect(
+                                color = Color.Red,
+                                topLeft = Offset(left, top),
+                                size = Size(right - left, bottom - top),
+                                style = Stroke(width = 2.dp.toPx())
+                            )
                         }
-
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            cameraSelector,
-                            preview,
-                            imageAnalyzer
-                        )
-                    }, ContextCompat.getMainExecutor(context))
+                    }
                 }
-            )
 
+            }
+
+            // Scan button
             Button(
                 onClick = { viewModel.onScanClicked() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
@@ -143,70 +176,64 @@ fun ScanScreen(
                     .padding(vertical = 8.dp)
             ) {
                 Text(
-                    text = if (uiState.isScanning) "Stop Scanning" else "Start Scanning",
-                    fontSize = 16.sp,
+                    if (uiState.isScanning) "Stop Scanning" else "Start Scanning",
                     color = Color.White
                 )
             }
 
+            // Controls
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
-                    onClick = { useFrontCamera = !useFrontCamera },
+                    onClick = { useFront = !useFront },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
                 ) {
-                    Text(
-                        text = if (useFrontCamera) "Camera Sau" else "Camera Trước",
-                        color = Color.White
-                    )
+                    Text(if (useFront) "Camera Sau" else "Camera Trước", color = Color.White)
                 }
                 Button(
-                    onClick = {
-                        viewModel.onQuitClicked()
-                        onQuitClicked()
-                    },
+                    onClick = { viewModel.onQuitClicked(); onQuitClicked() },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                 ) {
                     Text("QUIT", color = Color.White)
                 }
                 Row {
-                    IconButton(
-                        onClick = {
-                            if (!hasMicPermission) micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            else viewModel.onMicClicked()
-                        },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .border(
-                                width = if (uiState.isMicOn) 2.dp else 0.dp,
-                                color = if (uiState.isMicOn) Color.Green else Color.Transparent
-                            )
-                    ) {
+                    IconButton(onClick = {
+                        if (!hasMicPermission) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        else viewModel.onMicClicked()
+                    }) {
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_btn_speak_now),
-                            contentDescription = "Microphone",
+                            contentDescription = "Mic",
                             tint = if (uiState.isMicOn) Color.Green else Color.Black
                         )
                     }
-                    IconButton(
-                        onClick = { viewModel.onSpeakerClicked() },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .border(
-                                width = if (uiState.isSpeakerOn) 2.dp else 0.dp,
-                                color = if (uiState.isSpeakerOn) Color.Green else Color.Transparent
-                            )
-                    ) {
+                    IconButton(onClick = { viewModel.onSpeakerClicked() }) {
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_lock_silent_mode_off),
                             contentDescription = "Speaker",
                             tint = if (uiState.isSpeakerOn) Color.Green else Color.Black
                         )
                     }
+                    IconButton(
+                        onClick = {
+                            if (sttActive) sttHelper.stopListening()
+                            else sttHelper.startListening()
+                            sttActive = !sttActive
+                        },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_btn_speak_now),
+                            contentDescription = "Speech-to-text",
+                            tint = if (sttActive) Color.Green else Color.Gray
+                        )
+                    }
+
                 }
+
             }
         }
     }
@@ -215,7 +242,6 @@ fun ScanScreen(
         onDispose {
             cameraExecutor.shutdown()
             imageAnalyzer.clearAnalyzer()
-            Log.d("ScanScreen", "Camera executor shut down")
         }
     }
 }
