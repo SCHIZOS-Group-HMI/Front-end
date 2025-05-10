@@ -7,4 +7,6 @@ import retrofit2.http.POST
 interface ApiService {
     @POST("/scan")
     suspend fun sendScanData(@Body request: ScanRequest): Response<ScanResponse>
+    @POST("/chat")
+    suspend fun sendChat(@Body request: ChatRequest): Response<ChatResponse>
 }

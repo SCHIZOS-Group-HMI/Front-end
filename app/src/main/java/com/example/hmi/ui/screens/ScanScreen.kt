@@ -45,11 +45,11 @@ fun ScanScreen(
         factory = ScanViewModelFactory(LocalContext.current)
     )
 ) {
+
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-    // thêm vào bên trên, cùng chỗ khai báo cameraExecutor…
     var speechText by remember { mutableStateOf("") }
     var sttActive by remember { mutableStateOf(false) }
     val sttHelper = remember {
@@ -57,7 +57,6 @@ fun ScanScreen(
             speechText = text
         }
     }
-
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -88,7 +87,7 @@ fun ScanScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                uiState.scanResult.ifEmpty { "No results yet" },
+                uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
                 fontSize = 16.sp, color = Color.Black, modifier = Modifier.padding(16.dp)
             )
             Text(
@@ -219,18 +218,32 @@ fun ScanScreen(
                     }
                     IconButton(
                         onClick = {
-                            if (sttActive) sttHelper.stopListening()
-                            else sttHelper.startListening()
-                            sttActive = !sttActive
+                            if (!sttActive) {
+                                // Bắt đầu nghe
+                                sttHelper.startListening()
+                                sttActive = true
+                            } else {
+                                // Dừng nghe và gửi query
+                                sttHelper.stopListening()
+                                sttActive = false
+                                viewModel.onQuestionChanged(speechText)
+                                viewModel.onAskChat()
+                            }
                         },
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier
+                            .size(48.dp)
+                            .border(
+                                width = if (sttActive) 2.dp else 0.dp,
+                                color = if (sttActive) Color.Blue else Color.Transparent
+                            )
                     ) {
                         Icon(
-                            painter = painterResource(id = android.R.drawable.ic_btn_speak_now),
-                            contentDescription = "Speech-to-text",
-                            tint = if (sttActive) Color.Green else Color.Gray
+                            painter = painterResource(id = android.R.drawable.ic_menu_edit),
+                            contentDescription = "Speech-to-Text",
+                            tint = if (sttActive) Color.Blue else Color.Gray
                         )
                     }
+
 
                 }
 
