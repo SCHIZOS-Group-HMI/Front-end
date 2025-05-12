@@ -1,4 +1,3 @@
-// ScanScreen.kt
 package com.example.hmi.ui.screens
 
 import ScanViewModelFactory
@@ -17,6 +16,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +28,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -80,163 +81,194 @@ fun ScanScreen(
 
     HMITheme {
         Column(
-            Modifier
+            modifier = Modifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(Color(0xFFF5F6FA))
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             // Chat reply or loading animation
-            if (uiState.isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(16.dp),
-                    color = Color.Blue,
-                    strokeWidth = 4.dp
-                )
-            } else {
-                Text(
-                    uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
-                    fontSize = 16.sp,
-                    color = Color.Black,
-                    modifier = Modifier.padding(16.dp)
-                )
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(4.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                if (uiState.isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .padding(16.dp),
+                        color = Color(0xFF1976D2),
+                        strokeWidth = 4.dp
+                    )
+                } else {
+                    Text(
+                        uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
+                        fontSize = 18.sp,
+                        color = Color.Black,
+                        modifier = Modifier.padding(16.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
             Text(
                 text = speechText,
-                fontSize = 14.sp,
-                color = Color.Blue,
-                modifier = Modifier.padding(8.dp)
+                fontSize = 16.sp,
+                color = Color(0xFF1976D2),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                textAlign = TextAlign.Center
             )
 
-            Box(modifier = Modifier
-                .fillMaxWidth()
-                .height(400.dp)) {
-                // 1. Camera Preview
-                AndroidView(
-                    modifier = Modifier.matchParentSize(),
-                    factory = { ctx ->
-                        PreviewView(ctx).apply {
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        }
-                    },
-                    update = { previewView ->
-                        val providerFut = ProcessCameraProvider.getInstance(context)
-                        providerFut.addListener({
-                            val camProvider = providerFut.get()
-                            val selector = if (useFront)
-                                CameraSelector.DEFAULT_FRONT_CAMERA
-                            else
-                                CameraSelector.DEFAULT_BACK_CAMERA
-
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+                    .padding(8.dp),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(6.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // 1. Camera Preview
+                    AndroidView(
+                        modifier = Modifier.matchParentSize(),
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             }
+                        },
+                        update = { previewView ->
+                            val providerFut = ProcessCameraProvider.getInstance(context)
+                            providerFut.addListener({
+                                val camProvider = providerFut.get()
+                                val selector = if (useFront)
+                                    CameraSelector.DEFAULT_FRONT_CAMERA
+                                else
+                                    CameraSelector.DEFAULT_BACK_CAMERA
 
-                            imageAnalyzer.setAnalyzer(cameraExecutor) { proxy ->
-                                // Convert → Base64
-                                val bmp = proxy.toBitmap()
-                                val baos = ByteArrayOutputStream().apply {
-                                    bmp.compress(Bitmap.CompressFormat.JPEG, 50, this)
+                                val preview = Preview.Builder().build().also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
                                 }
-                                viewModel.latestImageBase64 =
-                                    Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-                                proxy.close()
+
+                                imageAnalyzer.setAnalyzer(cameraExecutor) { proxy ->
+                                    val bmp = proxy.toBitmap()
+                                    val baos = ByteArrayOutputStream().apply {
+                                        bmp.compress(Bitmap.CompressFormat.JPEG, 50, this)
+                                    }
+                                    viewModel.latestImageBase64 =
+                                        Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                                    proxy.close()
+                                }
+
+                                camProvider.unbindAll()
+                                camProvider.bindToLifecycle(
+                                    lifecycleOwner, selector, preview, imageAnalyzer
+                                )
+                            }, ContextCompat.getMainExecutor(context))
+                        }
+                    )
+
+                    // 2. Overlay boxes
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val previewW = size.width
+                        val previewH = size.height
+
+                        uiState.boxes.forEach { box ->
+                            val left = (box.x * previewW).coerceIn(0f, previewW)
+                            val top = (box.y * previewH).coerceIn(0f, previewH)
+                            val right = ((box.x + box.w) * previewW).coerceIn(0f, previewW)
+                            val bottom = ((box.y + box.h) * previewH).coerceIn(0f, previewH)
+
+                            if (right > left && bottom > top) {
+                                drawRect(
+                                    color = Color.Red.copy(alpha = 0.7f),
+                                    topLeft = Offset(left, top),
+                                    size = Size(right - left, bottom - top),
+                                    style = Stroke(width = 3.dp.toPx())
+                                )
                             }
-
-                            camProvider.unbindAll()
-                            camProvider.bindToLifecycle(
-                                lifecycleOwner, selector, preview, imageAnalyzer
-                            )
-                        }, ContextCompat.getMainExecutor(context))
-                    }
-                )
-
-                // 2. Overlay boxes
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    val previewW = size.width
-                    val previewH = size.height
-
-                    uiState.boxes.forEach { box ->
-                        // Tính toạ độ tuyệt đối
-                        val left = (box.x * previewW).coerceIn(0f, previewW)
-                        val top = (box.y * previewH).coerceIn(0f, previewH)
-                        val right = ((box.x + box.w) * previewW).coerceIn(0f, previewW)
-                        val bottom = ((box.y + box.h) * previewH).coerceIn(0f, previewH)
-
-                        // Nếu box còn có kích thước hợp lệ thì vẽ
-                        if (right > left && bottom > top) {
-                            drawRect(
-                                color = Color.Red,
-                                topLeft = Offset(left, top),
-                                size = Size(right - left, bottom - top),
-                                style = Stroke(width = 2.dp.toPx())
-                            )
                         }
                     }
                 }
             }
 
-            // Scan button
             Button(
                 onClick = { viewModel.onScanClicked() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .height(60.dp)
+                    .padding(vertical = 8.dp),
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
                     if (uiState.isScanning) "Stop Scanning" else "Start Scanning",
-                    color = Color.White
+                    fontSize = 18.sp,
+                    color = Color.White,
+                    fontFamily = MaterialTheme.typography.headlineSmall.fontFamily
                 )
             }
 
             // Controls
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
                     onClick = { useFront = !useFront },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
                 ) {
-                    Text(if (useFront) "Camera Trước" else "Camera Sau", color = Color.White)
+                    Text(if (useFront) "Camera Trước" else "Camera Sau", color = Color.White, fontSize = 16.sp)
                 }
                 Button(
                     onClick = { viewModel.onQuitClicked(); onQuitClicked() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
                 ) {
-                    Text("QUIT", color = Color.White)
+                    Text("QUIT", color = Color.White, fontSize = 16.sp)
                 }
-                Row {
-                    IconButton(onClick = {
-                        if (!hasMicPermission) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        else viewModel.onMicClicked()
-                    }) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (!hasMicPermission) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            else viewModel.onMicClicked()
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .border(2.dp, if (uiState.isMicOn) Color.Green else Color.Gray, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 4.dp)
+                    ) {
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_btn_speak_now),
                             contentDescription = "Mic",
                             tint = if (uiState.isMicOn) Color.Green else Color.Black
                         )
                     }
-                    IconButton(onClick = { viewModel.onSpeakerClicked() }) {
-                        Icon(
-                            painter = painterResource(id = android.R.drawable.ic_lock_silent_mode_off),
-                            contentDescription = "Speaker",
-                            tint = if (uiState.isSpeakerOn) Color.Green else Color.Black
-                        )
-                    }
                     IconButton(
                         onClick = {
                             if (!sttActive) {
-                                // Bắt đầu nghe
                                 sttHelper.startListening()
                                 sttActive = true
                             } else {
-                                // Dừng nghe và gửi query
                                 sttHelper.stopListening()
                                 sttActive = false
                                 viewModel.onQuestionChanged(speechText)
@@ -245,15 +277,13 @@ fun ScanScreen(
                         },
                         modifier = Modifier
                             .size(48.dp)
-                            .border(
-                                width = if (sttActive) 2.dp else 0.dp,
-                                color = if (sttActive) Color.Blue else Color.Transparent
-                            )
+                            .border(2.dp, if (sttActive) Color(0xFF1976D2) else Color.Gray, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 4.dp)
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.smart_toy),
                             contentDescription = "Speech-to-Text",
-                            tint = if (sttActive) Color.Blue else Color.Gray
+                            tint = if (sttActive) Color(0xFF1976D2) else Color.Gray
                         )
                     }
                 }

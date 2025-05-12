@@ -3,6 +3,6 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain>
         <!-- Nếu dùng thiết bị thật, thêm IP của máy chạy server -->
-        <domain includeSubdomains="true">192.168.1.15</domain>
+        <domain includeSubdomains="true">192.168.100.245</domain>
     </domain-config>
 </network-security-config>

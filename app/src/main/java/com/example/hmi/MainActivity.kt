@@ -7,12 +7,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.hmi.ui.screens.CalmingExerciseScreen
 import com.example.hmi.ui.screens.HomeScreen
 import com.example.hmi.ui.screens.ScanScreen
+import com.example.hmi.ui.screens.SplashScreen
 import com.example.hmi.ui.theme.HMITheme
 
 class MainActivity : ComponentActivity() {
@@ -34,12 +37,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             HMITheme {
-                AppNavigation(
-                    onRequestCameraPermission = { navigate ->
-                        navigateToScan = navigate
-                        requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                    }
-                )
+                val showSplash = remember { mutableStateOf(true) }
+
+                if (showSplash.value) {
+                    SplashScreen(
+                        onSplashFinished = {
+                            showSplash.value = false
+                        }
+                    )
+                } else {
+                    AppNavigation(
+                        onRequestCameraPermission = { navigate ->
+                            navigateToScan = navigate
+                            requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    )
+                }
             }
         }
     }
