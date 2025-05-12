@@ -1,4 +1,3 @@
-// ScanViewModel.kt
 package com.example.hmi.ui.viewmodel
 
 import android.Manifest
@@ -35,8 +34,9 @@ data class ScanUiState(
     val isSpeakerOn: Boolean = false,
     val scanResult: List<String> = emptyList(),
     val boxes: List<BoundingBox> = emptyList(),
-    val userQuestion : String = "",
-    val chatReply : String? = null
+    val userQuestion: String = "",
+    val chatReply: String? = null,
+    val isLoading: Boolean = false // Added loading state
 )
 
 class ScanViewModel(
@@ -52,10 +52,12 @@ class ScanViewModel(
     var latestImageBase64: String? = null
 
     private var scanJob: Job? = null
+    private var frameCounter: Int = 0 // Đếm số frame đã quét
 
     init {
         audioData = AudioData()
     }
+
     /** Nhận câu hỏi từ UI */
     fun onQuestionChanged(q: String) {
         _uiState.update { it.copy(userQuestion = q) }
@@ -63,26 +65,28 @@ class ScanViewModel(
 
     fun onAskChat() {
         viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true) } // Set loading to true
             val prompt = buildString {
-                appendLine("User asked: \"${_uiState.value.userQuestion}\"")
-                appendLine("Here are scan results:")
+                appendLine("Người dùng hỏi: \"${_uiState.value.userQuestion}\"")
+                appendLine("Dưới đây là kết quả quét:")
                 _uiState.value.scanResult.forEachIndexed { i, result ->
-                    appendLine("- Result[$i]: $result")
+                    appendLine("- Kết quả[$i]: $result")
                 }
             }
             try {
                 val resp = ApiClient.apiService.sendChat(ChatRequest(prompt))
                 if (resp.isSuccessful) {
                     val reply = resp.body()?.reply.orEmpty()
-                    _uiState.update { it.copy(chatReply = reply) }
+                    _uiState.update { it.copy(chatReply = reply, isLoading = false) }
                 } else {
-                    _uiState.update { it.copy(chatReply = "Error: ${resp.code()}") }
+                    _uiState.update { it.copy(chatReply = "Lỗi: ${resp.code()}", isLoading = false) }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(chatReply = "Error: ${e.message}") }
+                _uiState.update { it.copy(chatReply = "Lỗi: ${e.message}", isLoading = false) }
             }
         }
     }
+
     /** Bật/tắt chế độ scan liên tục */
     fun onScanClicked() {
         if (scanJob == null) {
@@ -100,6 +104,7 @@ class ScanViewModel(
         } else {
             scanJob?.cancel()
             scanJob = null
+            frameCounter = 0 // Đặt lại frameCounter khi dừng quét
             _uiState.value = ScanUiState()
         }
     }
@@ -115,10 +120,10 @@ class ScanViewModel(
             return
         }
 
-        // Capture audio
+        // Ghi âm
         val (audioB64, amplitude) = audioData?.captureAudio() ?: ("" to 0.0)
 
-        // Tạo request
+        // Tạo yêu cầu
         val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
             .format(Date())
         val request = ScanRequest(
@@ -133,20 +138,26 @@ class ScanViewModel(
             val resp = ApiClient.apiService.sendScanData(request)
             if (resp.isSuccessful) {
                 val body = resp.body()
-                // Extract boxes
+                // Lấy danh sách các hộp bao
                 val dets: List<ObjectDetectionResult> = body?.objectDetection ?: emptyList()
                 val bboxes: List<BoundingBox> = dets.map { it.bbox }
-                // Update UI state
-                val txt = "Objects: ${dets.joinToString { it.className }} | Audio: ${body?.audioDetection}"
+                // Tạo chuỗi kết quả quét
+                val txt = "Đối tượng: ${dets.joinToString { it.className }} | Âm thanh: ${body?.audioDetection}"
                 _uiState.update {
                     val newResults = (it.scanResult + txt).takeLast(10)
                     it.copy(scanResult = newResults, boxes = bboxes)
+                }
+                // Tăng frameCounter và kiểm tra gửi chatbot
+                frameCounter++
+                if (frameCounter >= 3) {
+                    onAskChat() // Gửi kết quả tới chatbot sau 10 frame
+                    frameCounter = 0 // Đặt lại bộ đếm
                 }
             } else {
                 _uiState.update { it.copy(scanResult = it.scanResult + "Thất bại: ${resp.code()} | Thời gian: $timestamp") }
             }
         } catch (e: Exception) {
-            Log.e("ScanViewModel", "Error sending request", e)
+            Log.e("ScanViewModel", "Lỗi khi gửi yêu cầu", e)
             _uiState.update { it.copy(scanResult = it.scanResult + "Lỗi: ${e.message} | Thời gian: $timestamp") }
         }
     }
@@ -154,6 +165,7 @@ class ScanViewModel(
     fun onQuitClicked() {
         scanJob?.cancel()
         scanJob = null
+        frameCounter = 0 // Đặt lại frameCounter khi thoát
         _uiState.value = ScanUiState()
     }
 
@@ -168,5 +180,6 @@ class ScanViewModel(
     override fun onCleared() {
         super.onCleared()
         scanJob?.cancel()
+        frameCounter = 0 // Đặt lại frameCounter khi ViewModel bị xóa
     }
 }

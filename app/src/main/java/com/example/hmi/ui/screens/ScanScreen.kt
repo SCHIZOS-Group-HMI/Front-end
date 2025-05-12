@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.hmi.R
 import com.example.hmi.ui.theme.HMITheme
 import com.example.hmi.ui.viewmodel.ScanViewModel
 import com.example.hmi.utils.SpeechToTextHelper
@@ -45,7 +47,6 @@ fun ScanScreen(
         factory = ScanViewModelFactory(LocalContext.current)
     )
 ) {
-
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -86,10 +87,23 @@ fun ScanScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
-                fontSize = 16.sp, color = Color.Black, modifier = Modifier.padding(16.dp)
-            )
+            // Chat reply or loading animation
+            if (uiState.isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .padding(16.dp),
+                    color = Color.Blue,
+                    strokeWidth = 4.dp
+                )
+            } else {
+                Text(
+                    uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
+                    fontSize = 16.sp,
+                    color = Color.Black,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
             Text(
                 text = speechText,
                 fontSize = 14.sp,
@@ -163,7 +177,6 @@ fun ScanScreen(
                         }
                     }
                 }
-
             }
 
             // Scan button
@@ -190,7 +203,7 @@ fun ScanScreen(
                     onClick = { useFront = !useFront },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
                 ) {
-                    Text(if (useFront) "Camera Sau" else "Camera Trước", color = Color.White)
+                    Text(if (useFront) "Camera Trước" else "Camera Sau", color = Color.White)
                 }
                 Button(
                     onClick = { viewModel.onQuitClicked(); onQuitClicked() },
@@ -238,15 +251,12 @@ fun ScanScreen(
                             )
                     ) {
                         Icon(
-                            painter = painterResource(id = android.R.drawable.ic_menu_edit),
+                            painter = painterResource(R.drawable.smart_toy),
                             contentDescription = "Speech-to-Text",
                             tint = if (sttActive) Color.Blue else Color.Gray
                         )
                     }
-
-
                 }
-
             }
         }
     }
