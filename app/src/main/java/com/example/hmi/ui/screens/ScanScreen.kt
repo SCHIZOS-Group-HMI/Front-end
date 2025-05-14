@@ -11,8 +11,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -24,9 +22,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -94,11 +89,10 @@ fun ScanScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp) // Giới hạn chiều cao để kích hoạt cuộn nếu cần
+                    .height(120.dp)
                     .padding(8.dp),
                 shape = RoundedCornerShape(12.dp),
-                elevation = CardDefaults.cardElevation(4.dp),
-
+                elevation = CardDefaults.cardElevation(4.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -147,7 +141,7 @@ fun ScanScreen(
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    // 1. Camera Preview
+                    // Camera Preview
                     AndroidView(
                         modifier = Modifier.matchParentSize(),
                         factory = { ctx ->
@@ -185,28 +179,6 @@ fun ScanScreen(
                             }, ContextCompat.getMainExecutor(context))
                         }
                     )
-
-                    // 2. Overlay boxes
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        val previewW = size.width
-                        val previewH = size.height
-
-                        uiState.boxes.forEach { box ->
-                            val left = (box.x * previewW).coerceIn(0f, previewW)
-                            val top = (box.y * previewH).coerceIn(0f, previewH)
-                            val right = ((box.x + box.w) * previewW).coerceIn(0f, previewW)
-                            val bottom = ((box.y + box.h) * previewH).coerceIn(0f, previewH)
-
-                            if (right > left && bottom > top) {
-                                drawRect(
-                                    color = Color.Red.copy(alpha = 0.7f),
-                                    topLeft = Offset(left, top),
-                                    size = Size(right - left, bottom - top),
-                                    style = Stroke(width = 3.dp.toPx())
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
