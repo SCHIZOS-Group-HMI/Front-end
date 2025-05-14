@@ -29,29 +29,17 @@ fun HomeScreen(
                 .background(Color(0xFFF5F6FA))
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
-            // Menu button at top left
-            Row(
+            // App title at the top center
+            Text(
+                text = "Schizos Application",
+                fontSize = 28.sp,
+                color = Color.Black,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 24.dp),
-                horizontalArrangement = Arrangement.Start
-            ) {
-                IconButton(
-                    onClick = { viewModel.onMenuClicked() },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(Color.White, shape = RoundedCornerShape(12.dp))
-                        .border(1.dp, Color.LightGray, shape = RoundedCornerShape(12.dp))
-                ) {
-                    Icon(
-                        painter = painterResource(id = android.R.drawable.ic_menu_more),
-                        contentDescription = "Menu",
-                        tint = Color.Black
-                    )
-                }
-            }
+                    .padding(bottom = 32.dp)
+            )
+
 
             // Scan environment card
             Card(
@@ -61,7 +49,7 @@ fun HomeScreen(
                     .padding(vertical = 8.dp),
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+
             ) {
                 Box(
                     modifier = Modifier

@@ -16,7 +16,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -92,27 +94,37 @@ fun ScanScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(120.dp) // Giới hạn chiều cao để kích hoạt cuộn nếu cần
                     .padding(8.dp),
                 shape = RoundedCornerShape(12.dp),
                 elevation = CardDefaults.cardElevation(4.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+
             ) {
-                if (uiState.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .padding(16.dp),
-                        color = Color(0xFF1976D2),
-                        strokeWidth = 4.dp
-                    )
-                } else {
-                    Text(
-                        uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
-                        fontSize = 18.sp,
-                        color = Color.Black,
-                        modifier = Modifier.padding(16.dp),
-                        textAlign = TextAlign.Center
-                    )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (uiState.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(48.dp),
+                            color = Color(0xFF1976D2),
+                            strokeWidth = 4.dp
+                        )
+                    } else {
+                        val scrollState = rememberScrollState()
+                        Text(
+                            text = uiState.chatReply.orEmpty().ifEmpty { "No results yet" },
+                            fontSize = 18.sp,
+                            color = Color.Black,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(scrollState),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
             Text(
@@ -200,7 +212,6 @@ fun ScanScreen(
 
             Button(
                 onClick = { viewModel.onScanClicked() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(60.dp)
@@ -224,16 +235,6 @@ fun ScanScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
-                    onClick = { useFront = !useFront },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 4.dp)
-                ) {
-                    Text(if (useFront) "Camera Trước" else "Camera Sau", color = Color.White, fontSize = 16.sp)
-                }
-                Button(
                     onClick = { viewModel.onQuitClicked(); onQuitClicked() },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
                     shape = RoundedCornerShape(12.dp),
@@ -242,6 +243,15 @@ fun ScanScreen(
                         .padding(horizontal = 4.dp)
                 ) {
                     Text("QUIT", color = Color.White, fontSize = 16.sp)
+                }
+                Button(
+                    onClick = { useFront = !useFront },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                ) {
+                    Text(if (useFront) "Front" else "Rear", color = Color.White, fontSize = 16.sp)
                 }
                 Row(
                     modifier = Modifier.weight(1f),
