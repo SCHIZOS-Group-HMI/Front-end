@@ -27,6 +27,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val SCAN_INTERVAL_MS = 2000L
+private const val SCAN_DURATION_MS = 10_000L // 10 giây
 
 data class ScanUiState(
     val isScanning: Boolean = false,
@@ -36,7 +37,7 @@ data class ScanUiState(
     val boxes: List<BoundingBox> = emptyList(),
     val userQuestion: String = "",
     val chatReply: String? = null,
-    val isLoading: Boolean = false // Added loading state
+    val isLoading: Boolean = false
 )
 
 class ScanViewModel(
@@ -47,29 +48,27 @@ class ScanViewModel(
     val uiState: StateFlow<ScanUiState> = _uiState.asStateFlow()
 
     private var audioData: AudioData? = null
-
-    /** Giữ Base64 của ảnh mới nhất từ UI */
     var latestImageBase64: String? = null
 
     private var scanJob: Job? = null
-    private var frameCounter: Int = 0 // Đếm số frame đã quét
+    private var scanStartTime: Long = 0L
+    private val scanResults = mutableListOf<String>()
 
     init {
         audioData = AudioData()
     }
 
-    /** Nhận câu hỏi từ UI */
     fun onQuestionChanged(q: String) {
         _uiState.update { it.copy(userQuestion = q) }
     }
 
     fun onAskChat() {
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isLoading = true) } // Set loading to true
+            _uiState.update { it.copy(isLoading = true) }
             val prompt = buildString {
                 appendLine("Người dùng hỏi: \"${_uiState.value.userQuestion}\"")
-                appendLine("Dưới đây là kết quả quét:")
-                _uiState.value.scanResult.forEachIndexed { i, result ->
+                appendLine("Dưới đây là kết quả quét tổng hợp:")
+                scanResults.forEachIndexed { i, result ->
                     appendLine("- Kết quả[$i]: $result")
                 }
             }
@@ -83,16 +82,19 @@ class ScanViewModel(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(chatReply = "Lỗi: ${e.message}", isLoading = false) }
+            } finally {
+                scanResults.clear() // Xóa kết quả sau khi gửi
             }
         }
     }
 
-    /** Bật/tắt chế độ scan liên tục */
     fun onScanClicked() {
         if (scanJob == null) {
-            _uiState.update { it.copy(isScanning = true) }
+            _uiState.update { it.copy(isScanning = true, scanResult = emptyList(), chatReply = null) }
+            scanStartTime = System.currentTimeMillis()
+            scanResults.clear()
             scanJob = viewModelScope.launch(Dispatchers.IO) {
-                while (isActive) {
+                while (isActive && System.currentTimeMillis() - scanStartTime < SCAN_DURATION_MS) {
                     val imgB64 = latestImageBase64
                     latestImageBase64 = null
                     if (imgB64 != null) {
@@ -100,30 +102,35 @@ class ScanViewModel(
                     }
                     delay(SCAN_INTERVAL_MS)
                 }
+                // Kết thúc quét tự động hoặc khi dừng, gửi kết quả cho chatbot
+                if (isActive) {
+                    onAskChat()
+                }
+                _uiState.update { it.copy(isScanning = false) }
+                scanJob = null
             }
         } else {
             scanJob?.cancel()
             scanJob = null
-            frameCounter = 0 // Đặt lại frameCounter khi dừng quét
-            _uiState.value = ScanUiState()
+            onAskChat() // Gửi kết quả tổng hợp khi dừng thủ công
+            _uiState.update { it.copy(isScanning = false) }
         }
     }
 
     private suspend fun sendScanRequest(imageB64: String) {
-        // Kiểm tra quyền RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            _uiState.update { it.copy(scanResult = it.scanResult + "Lỗi: Yêu cầu quyền RECORD_AUDIO") }
+            val errorMsg = "Lỗi: Yêu cầu quyền RECORD_AUDIO"
+            scanResults.add(errorMsg)
+            _uiState.update { it.copy(scanResult = scanResults.takeLast(10)) }
             return
         }
 
-        // Ghi âm
         val (audioB64, amplitude) = audioData?.captureAudio() ?: ("" to 0.0)
 
-        // Tạo yêu cầu
         val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
             .format(Date())
         val request = ScanRequest(
@@ -138,34 +145,26 @@ class ScanViewModel(
             val resp = ApiClient.apiService.sendScanData(request)
             if (resp.isSuccessful) {
                 val body = resp.body()
-                // Lấy danh sách các hộp bao
                 val dets: List<ObjectDetectionResult> = body?.objectDetection ?: emptyList()
-                val bboxes: List<BoundingBox> = dets.map { it.bbox }
-                // Tạo chuỗi kết quả quét
                 val txt = "Đối tượng: ${dets.joinToString { it.className }} | Âm thanh: ${body?.audioDetection}"
-                _uiState.update {
-                    val newResults = (it.scanResult + txt).takeLast(10)
-                    it.copy(scanResult = newResults, boxes = bboxes)
-                }
-                // Tăng frameCounter và kiểm tra gửi chatbot
-                frameCounter++
-                if (frameCounter >= 3) {
-                    onAskChat() // Gửi kết quả tới chatbot sau 10 frame
-                    frameCounter = 0 // Đặt lại bộ đếm
-                }
+                scanResults.add(txt)
+                _uiState.update { it.copy(scanResult = scanResults.takeLast(10)) }
             } else {
-                _uiState.update { it.copy(scanResult = it.scanResult + "Thất bại: ${resp.code()} | Thời gian: $timestamp") }
+                val errorMsg = "Thất bại: ${resp.code()} | Thời gian: $timestamp"
+                scanResults.add(errorMsg)
+                _uiState.update { it.copy(scanResult = scanResults.takeLast(10)) }
             }
         } catch (e: Exception) {
             Log.e("ScanViewModel", "Lỗi khi gửi yêu cầu", e)
-            _uiState.update { it.copy(scanResult = it.scanResult + "Lỗi: ${e.message} | Thời gian: $timestamp") }
+            val errorMsg = "Lỗi: ${e.message} | Thời gian: $timestamp"
+            scanResults.add(errorMsg)
+            _uiState.update { it.copy(scanResult = scanResults.takeLast(10)) }
         }
     }
 
     fun onQuitClicked() {
         scanJob?.cancel()
         scanJob = null
-        frameCounter = 0 // Đặt lại frameCounter khi thoát
         _uiState.value = ScanUiState()
     }
 
@@ -180,6 +179,5 @@ class ScanViewModel(
     override fun onCleared() {
         super.onCleared()
         scanJob?.cancel()
-        frameCounter = 0 // Đặt lại frameCounter khi ViewModel bị xóa
     }
 }

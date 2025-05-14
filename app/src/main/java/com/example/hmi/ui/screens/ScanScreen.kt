@@ -188,10 +188,11 @@ fun ScanScreen(
                     .fillMaxWidth()
                     .height(60.dp)
                     .padding(vertical = 8.dp),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
+                enabled = !uiState.isLoading // Vô hiệu hóa nút khi đang loading
             ) {
                 Text(
-                    if (uiState.isScanning) "Stop Scanning" else "Start Scanning",
+                    text = if (uiState.isScanning) "Stop Scanning" else "Start Scanning",
                     fontSize = 18.sp,
                     color = Color.White,
                     fontFamily = MaterialTheme.typography.headlineSmall.fontFamily
