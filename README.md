@@ -43,7 +43,7 @@ HMI (Mental Health Interface) is an Android application designed to provide ment
 ### Build and Run
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/hmi.git
+   https://github.com/SCHIZOS-Group-HMI/Front-end.git
    ```
 2. Open the project in Android Studio
 3. Sync Gradle files and resolve dependencies
