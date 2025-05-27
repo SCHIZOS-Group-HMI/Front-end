@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-private const val SCAN_INTERVAL_MS = 2000L
+private const val SCAN_INTERVAL_MS = 500L
 private const val SCAN_DURATION_MS = 10_000L // 10 giây
 
 data class ScanUiState(
